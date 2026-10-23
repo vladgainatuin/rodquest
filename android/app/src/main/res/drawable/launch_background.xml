@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Родквест: заставка до запуска Flutter — тот же фон, что у анимированной спирали. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/rq_splash_background" />
+    <item>
+        <bitmap android:gravity="center" android:src="@mipmap/launch_image" />
+    </item>
+</layer-list>
