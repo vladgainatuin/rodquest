@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="/rodquest/">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="Родквест — семейный таск-трекер в стиле MMORPG">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="Родквест">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <title>Родквест</title>
+  <meta name="theme-color" content="#6C4CF5">
+  <style>
+    /* Заставка, пока загружается приложение. */
+    html, body { margin: 0; height: 100%; background: #6C4CF5; }
+    #rq-splash {
+      position: fixed; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 14px;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #fff;
+    }
+    #rq-splash img { width: 120px; height: 120px; animation: rq-pulse 1.2s ease-in-out infinite; }
+    #rq-splash b { font-size: 28px; letter-spacing: .5px; }
+    #rq-splash span { opacity: .8; font-size: 14px; }
+    @keyframes rq-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.07); } }
+  </style>
+  <link rel="manifest" href="manifest.json">
+</head>
+<body>
+  <div id="rq-splash">
+    <img src="icons/Icon-192.png" alt="">
+    <b>Родквест</b>
+    <span>Собираем гильдию…</span>
+  </div>
+  <script>
+    // Убираем заставку, когда Flutter нарисовал первый кадр.
+    window.addEventListener('flutter-first-frame', function () {
+      var s = document.getElementById('rq-splash');
+      if (s) s.remove();
+    });
+  </script>
+  <!--
+    You can customize the "flutter_bootstrap.js" script.
+    This is useful to provide a custom configuration to the Flutter loader
+    or to give the user feedback during the initialization process.
+
+    For more details:
+    * https://docs.flutter.dev/platform-integration/web/initialization
+  -->
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>
