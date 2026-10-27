@@ -1135,4 +1135,120 @@ void main() {
       expect(Backup.decode('\uFEFF$raw').heroCount, 2);
     });
   });
+  group('Версия 0.9', () {
+    late DateTime now;
+    late GameController game;
+
+    setUp(() async {
+      now = DateTime(2026, 10, 27, 9); // вторник
+      game = GameController(MemoryGameRepository(), clock: () => now);
+      await game.load();
+      await game.createGuild(guildName: 'Волки', heroName: 'Папа', avatar: '🧙', kind: GroupKind.clan);
+    });
+
+    test('семья или клан: слова и роль главы меняются, данные переживают перезапуск', () async {
+      expect(game.groupKind, GroupKind.clan);
+      expect(Words.group, 'Клан');
+      expect(HeroRole.leader.label, 'Глава клана');
+      expect(game.feed.first.text, contains('клан «Волки»'));
+      expect(await game.setGroupKind(GroupKind.family), isTrue);
+      expect(Words.group, 'Семья');
+      expect(HeroRole.leader.label, 'Глава семьи');
+      final back = AppState.fromJson(jsonDecode(jsonEncode(game.syncState.toJson())) as Map<String, dynamic>);
+      expect(back.groupKind, GroupKind.family);
+      // Юнга не меняет вид группы.
+      final kid = await game.addHero(name: 'Миша', avatar: '🧒', role: HeroRole.child);
+      await game.switchHero(kid.id);
+      expect(await game.setGroupKind(GroupKind.clan), isFalse);
+      expect(game.groupKind, GroupKind.family);
+    });
+
+    test('старые данные без вида группы — семья', () {
+      final s = AppState.fromJson({'schema': 5, 'guildName': 'Дом', 'heroes': [], 'goals': [], 'feed': []});
+      expect(s.groupKind, GroupKind.family);
+    });
+
+    test('рутина 3 раза в день: опыт за каждый раз, серия одна, отмена по одному', () async {
+      final g = await game.addGoal(title: 'Почистить зубы', tier: GoalTier.daily, perPeriod: 3);
+      expect(g.perPeriod, 3);
+      final hero = game.activeHero!;
+      final r1 = await game.toggleDaily(g.id);
+      expect(r1.xp, 5);
+      expect(GameRules.timesDone(game.goalById(g.id)!, now), 1);
+      expect(GameRules.isDoneToday(game.goalById(g.id)!, now), isFalse);
+      final r2 = await game.toggleDaily(g.id);
+      expect(r2.xp, GameRules.repeatAgainXp(g));
+      await game.toggleDaily(g.id);
+      final goal = game.goalById(g.id)!;
+      expect(GameRules.timesDone(goal, now), 3);
+      expect(GameRules.isDoneToday(goal, now), isTrue);
+      expect(GameRules.canRepeat(goal, now), isFalse);
+      expect(goal.streak, 1);
+      expect(GameRules.timesLabel(goal, now), '3/3');
+      final xp3 = hero.xp;
+      expect(xp3, 5 + 5 + 5);
+      expect(game.records.where((r) => r.goalId == g.id).length, 3);
+      // Четвёртое нажатие снимает последнюю отметку.
+      await game.toggleDaily(g.id);
+      expect(GameRules.timesDone(game.goalById(g.id)!, now), 2);
+      expect(game.activeHero!.xp, 10);
+      await game.undoDaily(g.id);
+      await game.undoDaily(g.id);
+      expect(GameRules.timesDone(game.goalById(g.id)!, now), 0);
+      expect(game.goalById(g.id)!.streak, 0);
+      expect(game.activeHero!.xp, 0);
+      expect(game.activeHero!.coins, 0);
+      // Назавтра — снова с нуля, серия продолжается.
+      await game.toggleDaily(g.id);
+      now = now.add(const Duration(days: 1));
+      expect(GameRules.timesDone(game.goalById(g.id)!, now), 0);
+      await game.toggleDaily(g.id);
+      expect(game.goalById(g.id)!.streak, 2);
+      expect(GameRules.timesDone(game.goalById(g.id)!, now), 1);
+    });
+
+    test('рутина без ограничения: отмечается сколько угодно (до потолка)', () async {
+      final g = await game.addGoal(title: 'Стакан воды', tier: GoalTier.daily, perPeriod: 0);
+      for (var i = 0; i < Goal.maxPerPeriod + 3; i++) {
+        await game.toggleDaily(g.id);
+      }
+      final goal = game.goalById(g.id)!;
+      expect(GameRules.isDoneToday(goal, now), isTrue);
+      // На потолке следующее нажатие снимает последнюю отметку, а не добавляет.
+      expect(GameRules.timesDone(goal, now), lessThanOrEqualTo(Goal.maxPerPeriod));
+      expect(GameRules.timesLabel(goal, now), startsWith('×'));
+    });
+
+    test('сколько раз за день выбирает взрослый; JSON обычной рутины не меняется', () async {
+      final plain = await game.addGoal(title: 'Зарядка', tier: GoalTier.daily);
+      expect(plain.toJson().containsKey('perPeriod'), isFalse);
+      final kid = await game.addHero(name: 'Миша', avatar: '🧒', role: HeroRole.child);
+      await game.switchHero(kid.id);
+      final byKid = await game.addGoal(title: 'Конфета', tier: GoalTier.daily, perPeriod: 0);
+      expect(byKid.perPeriod, 1);
+      final task = await game.addGoal(title: 'Задание', tier: GoalTier.task, perPeriod: 5);
+      expect(task.perPeriod, 1);
+      // Сохранение и чтение многоразовой рутины.
+      final multi = Goal.fromJson(jsonDecode(jsonEncode(
+          Goal(id: 'x', title: 'Вода', tier: GoalTier.daily, ownerId: '', createdAt: now, perPeriod: 8, doneCount: 3)
+              .toJson())) as Map<String, dynamic>);
+      expect(multi.perPeriod, 8);
+      expect(multi.doneCount, 3);
+    });
+
+    test('вклад в цель гильдии даёт опыт и монеты, но не больше дневного предела', () async {
+      final hero = game.activeHero!;
+      var total = 0;
+      for (var i = 0; i < 10; i++) {
+        total += game.rewardGuildContribution(goalId: 'g1', title: '1000 км', amount: 5, unit: 'км').xp;
+      }
+      expect(total, GameController.guildXpPerDay);
+      expect(hero.xp, GameController.guildXpPerDay);
+      expect(hero.statXp[HeroStat.charisma], GameController.guildXpPerDay);
+      expect(game.records.where((r) => r.kind == XpKind.guild).length, GameController.guildXpPerDay ~/ GameController.guildXp);
+      expect(game.feed.first.text, contains('цель гильдии «1000 км»'));
+      now = now.add(const Duration(days: 1));
+      expect(game.rewardGuildContribution(goalId: 'g1', title: '1000 км', amount: 1, unit: 'км').xp, GameController.guildXp);
+    });
+  });
 }

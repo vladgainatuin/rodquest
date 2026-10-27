@@ -229,7 +229,7 @@ class _LegendSpotlight extends StatelessWidget {
               const Text('👑', style: TextStyle(fontSize: 30)),
               const SizedBox(width: 10),
               Expanded(child: Text(goal.title, style: Theme.of(context).textTheme.titleLarge)),
-              if (goal.isFamily) const Text('🛡', style: TextStyle(fontSize: 20)),
+              if (goal.isFamily) Text(Words.emoji, style: const TextStyle(fontSize: 20)),
             ],
           ),
           const SizedBox(height: 10),

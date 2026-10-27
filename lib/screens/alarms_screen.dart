@@ -153,7 +153,7 @@ class _AlarmsScreenState extends State<AlarmsScreen> {
                 ),
               for (final r in mine) ReminderTile(reminder: r, now: now),
               if (others.isNotEmpty) ...[
-                const SectionTitle('🛡 Семья'),
+                SectionTitle('${Words.emoji} ${Words.group}'),
                 for (final r in others) ReminderTile(reminder: r, now: now, showOwner: true),
               ],
             ],

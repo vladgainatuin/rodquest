@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../logic/backup.dart';
+import '../models/words.dart';
 import '../services/backup_files.dart';
 import '../theme.dart';
 import 'common.dart';
@@ -40,7 +41,7 @@ Future<void> importBackupFlow(BuildContext context) async {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(data.solo ? '🧭 Личный путь' : '🛡 ${data.guildName.isEmpty ? 'Гильдия' : data.guildName}',
+          Text(data.solo ? '🧭 Личный путь' : '${data.groupKind.emoji} ${data.guildName.isEmpty ? data.groupKind.label : data.guildName}',
               style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
           const SizedBox(height: 8),
           Text('Героев: ${data.heroCount} · целей: ${data.goalCount} (выполнено ${data.doneCount})'),
@@ -65,7 +66,7 @@ Future<void> importBackupFlow(BuildContext context) async {
   // После восстановления тема могла смениться — экран перестроен заново.
   if (!messenger.mounted) return;
   messenger.showSnackBar(SnackBar(
-    content: Text(done ? '📂 Данные восстановлены из копии' : '⚠️ Восстановить данные может только глава гильдии'),
+    content: Text(done ? '📂 Данные восстановлены из копии' : '⚠️ Восстановить данные может только ${Words.leader.toLowerCase()}'),
   ));
 }
 

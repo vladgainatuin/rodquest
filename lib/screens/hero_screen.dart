@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../logic/game_rules.dart';
 import '../models/models.dart';
+import '../sync/cloud_scope.dart';
 import '../theme.dart';
 import '../widgets/backup_ui.dart';
 import '../widgets/common.dart';
 import '../widgets/pin_pad.dart';
 import 'alarms_screen.dart';
+import 'cloud_screen.dart';
 import 'guild_screen.dart';
 import 'skills_screen.dart';
 import 'stats_screen.dart';
@@ -250,17 +252,27 @@ class HeroScreen extends StatelessWidget {
               ),
               if (game.solo)
                 ListTile(
-                  leading: const Text('🛡', style: TextStyle(fontSize: 22)),
-                  title: const Text('Пригласить семью', style: TextStyle(fontWeight: FontWeight.w800)),
-                  subtitle: const Text('Личный путь станет гильдией: цели и прогресс сохранятся'),
+                  leading: const Text('🏡', style: TextStyle(fontSize: 22)),
+                  title: const Text('Пригласить семью или друзей', style: TextStyle(fontWeight: FontWeight.w800)),
+                  subtitle: const Text('Личный путь станет семьёй или кланом: цели и прогресс сохранятся'),
                   onTap: () => _toFamily(context),
                 )
               else if (hero.role.canApprove && game.heroes.length == 1)
                 ListTile(
                   leading: const Text('🧭', style: TextStyle(fontSize: 22)),
                   title: const Text('Личный режим «Только я»', style: TextStyle(fontWeight: FontWeight.w800)),
-                  subtitle: const Text('Без гильдии и семейных целей. Семью можно пригласить позже'),
+                  subtitle: Text('Без ${Words.groupGen} и общих целей. Близких можно пригласить позже'),
                   onTap: () => game.setSolo(true),
+                ),
+              // v0.9: глава выбирает, как называется группа — «Семья» или «Клан».
+              if (hero.role.canApprove && !game.solo)
+                ListTile(
+                  leading: Text(game.groupKind.emoji, style: const TextStyle(fontSize: 22)),
+                  title: Text('Мы — ${Words.groupLower}', style: const TextStyle(fontWeight: FontWeight.w800)),
+                  subtitle: Text(Words.clan
+                      ? 'Сменить на «Семья» — для родителей и детей'
+                      : 'Сменить на «Клан» — для друзей, соседей, команды'),
+                  onTap: () => game.setGroupKind(Words.clan ? GroupKind.family : GroupKind.clan),
                 ),
               if (hero.role.canApprove && !game.solo)
                 ListTile(
@@ -270,6 +282,15 @@ class HeroScreen extends StatelessWidget {
                       ? 'Включён: юнги входят во взрослые профили только по PIN'
                       : 'Выключен: юнга может переключиться на профиль взрослого'),
                   onTap: () => openPinSettings(context),
+                ),
+              if (CloudScope.of(context) case final cloud? when cloud.connected || hero.role.isAdult)
+                ListTile(
+                  leading: const Text('☁️', style: TextStyle(fontSize: 22)),
+                  title: Text('Облако и устройства ${Words.groupGen}', style: const TextStyle(fontWeight: FontWeight.w800)),
+                  subtitle: Text(cloud.connected
+                      ? cloudStatusText(cloud, game.now)
+                      : 'Синхронизация между телефонами ${Words.groupGen}'),
+                  onTap: () => openCloud(context),
                 ),
               if (game.canBackup) ...[
                 ListTile(
@@ -290,15 +311,19 @@ class HeroScreen extends StatelessWidget {
                   leading: const Text('🧹', style: TextStyle(fontSize: 22)),
                   title: Text('Сбросить все данные',
                       style: TextStyle(fontWeight: FontWeight.w800, color: RqColors.danger)),
-                  subtitle: const Text('Удалит гильдию, героев и цели на этом устройстве'),
+                  subtitle: Text('Удалит ${Words.groupAcc}, героев и цели на этом устройстве'),
                   onTap: () => _confirmReset(context),
                 ),
             ],
           ),
         ),
         const SizedBox(height: 8),
-        Center(child: Text('Родквест v0.7 · данные хранятся на этом устройстве',
-            style: Theme.of(context).textTheme.bodySmall)),
+        Center(
+            child: Text(
+                (CloudScope.of(context)?.connected ?? false)
+                    ? 'Родквест v0.9 · данные синхронизируются с ${Words.groupIns}'
+                    : 'Родквест v0.9 · данные хранятся на этом устройстве',
+                style: Theme.of(context).textTheme.bodySmall)),
       ],
     );
   }
@@ -306,28 +331,54 @@ class HeroScreen extends StatelessWidget {
   Future<void> _toFamily(BuildContext context) async {
     final game = GameScope.read(context);
     final ctrl = TextEditingController();
+    var kind = GroupKind.family;
     final name = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Название гильдии'),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          textCapitalization: TextCapitalization.words,
-          decoration: const InputDecoration(hintText: 'Например: Дом Смелых'),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('Семья или клан?'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 8,
+                children: [
+                  for (final k in GroupKind.values)
+                    ChoiceChip(
+                      label: Text('${k.emoji} ${k.label}'),
+                      selected: kind == k,
+                      onSelected: (_) => setLocal(() => kind = k),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(kind.hint, style: Theme.of(ctx).textTheme.bodySmall),
+              const SizedBox(height: 12),
+              TextField(
+                controller: ctrl,
+                autofocus: true,
+                textCapitalization: TextCapitalization.words,
+                decoration: InputDecoration(
+                    hintText: kind == GroupKind.clan ? 'Например: Клан Северных Волков' : 'Например: Дом Смелых'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+            TextButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('Основать')),
+          ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
-          TextButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('Основать')),
-        ],
       ),
     );
     disposeLater(ctrl);
     if (name == null || name.trim().isEmpty) return;
-    await game.setSolo(false, guildName: name);
+    await game.setSolo(false, guildName: name, kind: kind);
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('🛡 Гильдия основана! Добавьте близких на вкладке «Гильдия»')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(kind == GroupKind.clan
+              ? '⚔️ Клан основан! Добавьте друзей на вкладке «Клан»'
+              : '🏡 Семья создана! Добавьте близких на вкладке «Семья»')));
     }
   }
 
@@ -337,7 +388,10 @@ class HeroScreen extends StatelessWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Сбросить всё?'),
-        content: const Text('Гильдия, герои и все цели будут удалены. Вернуть их можно только из резервной копии.'),
+        content: Text((CloudScope.read(context)?.connected ?? false)
+            ? 'Все данные на этом устройстве будут удалены, а само оно отключится от облака. '
+                'У остальных данные ${Words.groupGen} останутся.'
+            : '${Words.group}, герои и все цели будут удалены. Вернуть их можно только из резервной копии.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
           TextButton(

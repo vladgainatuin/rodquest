@@ -15,12 +15,20 @@ class CheckBubble extends StatelessWidget {
     required this.color,
     this.pending = false,
     this.onTap,
+    this.onLongPress,
+    this.count,
   });
 
   final bool done;
   final bool pending;
   final Color color;
   final VoidCallback? onTap;
+
+  /// v6: снять последнюю отметку многоразовой рутины.
+  final VoidCallback? onLongPress;
+
+  /// v6: счётчик многоразовой рутины («1/3», «×2») — пока она не выполнена полностью.
+  final String? count;
 
   @override
   Widget build(BuildContext context) {
@@ -30,6 +38,7 @@ class CheckBubble extends StatelessWidget {
       label: done ? 'Выполнено' : 'Отметить выполненным',
       child: GestureDetector(
         onTap: onTap,
+        onLongPress: onLongPress,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
           width: 34,
@@ -40,11 +49,15 @@ class CheckBubble extends StatelessWidget {
             shape: BoxShape.circle,
             border: Border.all(color: done ? RqColors.shade(color) : RqColors.tint(color, 0.6), width: 3),
           ),
-          child: done
-              ? Icon(Icons.check_rounded, color: RqColors.onAccent, size: 22)
-              : pending
-                  ? const Text('⏳', style: TextStyle(fontSize: 15))
-                  : null,
+          child: count != null
+              ? Text(count!,
+                  style: TextStyle(
+                      fontSize: 11, fontWeight: FontWeight.w900, color: done ? RqColors.onAccent : RqColors.strong(color)))
+              : done
+                  ? Icon(Icons.check_rounded, color: RqColors.onAccent, size: 22)
+                  : pending
+                      ? const Text('⏳', style: TextStyle(fontSize: 15))
+                      : null,
         ),
       ),
     );
@@ -79,6 +92,10 @@ class GoalTile extends StatelessWidget {
     };
 
     final canDo = !goal.isDaily || done || GameRules.canDoNow(goal, now);
+    // v6: многоразовая рутина — счётчик в галочке, нажатие отмечает ещё раз.
+    final times = goal.isMulti ? GameRules.timesDone(goal, now) : 0;
+    // Можно отметить ещё раз (у «без ограничения» — и после «выполнено»).
+    final again = goal.isMulti && GameRules.canRepeat(goal, now);
     // Взрослым — сколько накоплено в копилке цели (из «Бюджета»).
     final pot = game.canSeeBudget ? game.ownPotOf(goal.id) : null;
     final savingPot = game.canSeeBudget ? game.potForGoal(goal.id) : null;
@@ -92,7 +109,22 @@ class GoalTile extends StatelessWidget {
         return;
       }
       if (goal.isDaily) {
+        // Многоразовая: каждое нажатие — ещё раз, пока не наберётся заданное число.
         r = await game.toggleDaily(goal.id);
+        if (goal.isMulti && r.xp > 0 && context.mounted) {
+          showReward(context, r);
+          final left = goal.perPeriod == 0 ? null : goal.perPeriod - GameRules.timesDone(goal, game.now);
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            duration: const Duration(seconds: 3),
+            content: Text(left == null
+                ? '✅ Отмечено: ${GameRules.timesLabel(goal, game.now)} ${GameRules.periodLabel(goal.repeat)}'
+                : left > 0
+                    ? '✅ ${GameRules.timesLabel(goal, game.now)} — ещё $left'
+                    : '🎉 «${goal.title}» — ${GameRules.periodLabel(goal.repeat)} всё выполнено!'),
+            action: SnackBarAction(label: 'Отменить', onPressed: () => game.undoDaily(goal.id)),
+          ));
+          return;
+        }
         // Рутина накоплений («Отложить 10%») — предложить вписать сумму.
         if (savingPot != null && r.xp > 0 && context.mounted) {
           showReward(context, r);
@@ -115,7 +147,11 @@ class GoalTile extends StatelessWidget {
       if (context.mounted) showReward(context, r);
     }
 
-    final xpLabel = goal.isDaily ? '+${GameRules.repeatXp(goal, GameRules.nextStreak(goal, now))}' : '+${goal.tier.xp}';
+    final xpLabel = !goal.isDaily
+        ? '+${goal.tier.xp}'
+        : times > 0
+            ? '+${GameRules.repeatAgainXp(goal)}'
+            : '+${GameRules.repeatXp(goal, GameRules.nextStreak(goal, now))}';
 
     return RqCard(
       onTap: onOpen,
@@ -126,7 +162,14 @@ class GoalTile extends StatelessWidget {
         children: [
           Opacity(
             opacity: canDo ? 1 : 0.4,
-            child: CheckBubble(done: done, pending: goal.pendingApproval, color: color, onTap: toggle),
+            child: CheckBubble(
+              done: done,
+              pending: goal.pendingApproval,
+              color: color,
+              onTap: toggle,
+              onLongPress: times > 0 ? () => game.undoDaily(goal.id) : null,
+              count: goal.isMulti && times > 0 ? GameRules.timesLabel(goal, now) : null,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -165,14 +208,15 @@ class GoalTile extends StatelessWidget {
                       MiniPill(
                           '${pot.emoji} ${GameRules.rub(GameRules.potSaved(pot.id, game.money))} из ${GameRules.rub(pot.target)}',
                           RqColors.coin),
-                    if (goal.isFamily) MiniPill('🛡 семья', RqColors.primary),
+                    if (goal.isFamily) MiniPill('${Words.emoji} ${Words.sharedPill}', RqColors.primary),
                     if (goal.isPrivate) MiniPill('🔒 личная', RqColors.inkSoft),
                     if (goal.isDaily)
                       MiniPill('${goal.repeat.emoji} ${GameRules.scheduleLabel(goal)}${planned && !done ? ' · сегодня!' : ''}',
                           planned && !done ? RqColors.gold : RqColors.tier(GoalTier.daily)),
                     if (goal.isDaily && streak > 0) StreakFlame(streak: streak, unit: goal.repeat.unit),
                     if (due != DueState.none) MiniPill('📅 ${GameRules.dueLabel(goal, now)}', dueColor),
-                    if (!done && canDo) MiniPill('$xpLabel XP', RqColors.xp),
+                    if (goal.isMulti) MiniPill('✖️ ${GameRules.perPeriodLabel(goal)}', RqColors.tier(GoalTier.daily)),
+                    if ((!done || again) && canDo) MiniPill('$xpLabel XP', RqColors.xp),
                   ],
                 ),
                 // v0.7: у легенд и эпиков в игровой теме — пешка на дорожке к короне.
@@ -252,6 +296,7 @@ class _GoalEditorSheetState extends State<GoalEditorSheet> {
   Set<int> _weekdays = {};
   int? _monthDay;
   LifeArea? _area;
+  int _perPeriod = 1;
   bool _statTouched = false;
   final _saving = TextEditingController();
   bool _inited = false;
@@ -273,6 +318,7 @@ class _GoalEditorSheetState extends State<GoalEditorSheet> {
     _weekdays = {...?g?.weekdays};
     _monthDay = g?.monthDay;
     _area = g?.area;
+    _perPeriod = g?.perPeriod ?? 1;
     _statTouched = g != null;
   }
 
@@ -341,6 +387,7 @@ class _GoalEditorSheetState extends State<GoalEditorSheet> {
         weekdays: _weekdays.toList(),
         monthDay: _monthDay,
         area: _area,
+        perPeriod: _perPeriod,
       );
       if (_showSaving(game) && saving != null && saving > 0) await game.setGoalSavingTarget(created.id, saving);
     } else {
@@ -359,6 +406,7 @@ class _GoalEditorSheetState extends State<GoalEditorSheet> {
         weekdays: _weekdays.toList(),
         monthDay: _monthDay,
         area: _area,
+        perPeriod: _perPeriod,
       );
       if (_showSaving(game)) await game.setGoalSavingTarget(widget.goal!.id, saving);
     }
@@ -511,6 +559,38 @@ class _GoalEditorSheetState extends State<GoalEditorSheet> {
                     style: theme.textTheme.bodySmall,
                   ),
                 ),
+                // v6: сколько раз за период — решает взрослый (родитель).
+                if (game.activeHero?.role.isAdult ?? false) ...[
+                  _Label(switch (_repeat) {
+                    Repeat.daily => 'Сколько раз в день',
+                    Repeat.weekly => 'Сколько раз в неделю',
+                    Repeat.monthly => 'Сколько раз в месяц',
+                  }),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final n in const [1, 2, 3, 4, 5, 10, 0])
+                        ChoiceChip(
+                          label: Text(n == 0 ? '∞ без ограничения' : n == 1 ? '1 раз' : '$n ${GameRules.timesWord(n)}'),
+                          selected: _perPeriod == n,
+                          onSelected: (_) => setState(() => _perPeriod = n),
+                        ),
+                    ],
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      _perPeriod == 1
+                          ? 'Один раз за период — как обычная рутина.'
+                          : 'Можно отмечать несколько раз: первый раз — опыт с бонусом серии, '
+                              'каждый следующий — +${_repeat.baseXp} XP и ${_repeat.coins} 🪙. '
+                              '${_perPeriod == 0 ? 'Без ограничения (но не больше ${Goal.maxPerPeriod} раз).' : 'Рутина выполнена, когда отмечена $_perPeriod ${GameRules.timesWord(_perPeriod)}.'} '
+                              'Например: «Почистить зубы» — 2 раза, «Стакан воды» — 8 раз.',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
+                ],
               ],
               if (_tier != GoalTier.legend) ...[
                 _Label(_tier == GoalTier.daily ? 'Ведёт к цели (необязательно)' : 'Ведёт к цели'),
@@ -647,8 +727,8 @@ class _GoalEditorSheetState extends State<GoalEditorSheet> {
                     _family = v;
                     if (v) _private = false;
                   }),
-                  title: const Text('🛡 Семейная цель', style: TextStyle(fontWeight: FontWeight.w800)),
-                  subtitle: const Text('Видна всей гильдии в общем прогрессе'),
+                  title: Text('${Words.emoji} ${Words.sharedGoal}', style: const TextStyle(fontWeight: FontWeight.w800)),
+                  subtitle: Text('Видна всем в ${Words.groupPrep} в общем прогрессе'),
                 ),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
@@ -658,7 +738,7 @@ class _GoalEditorSheetState extends State<GoalEditorSheet> {
                     if (v) _family = false;
                   }),
                   title: const Text('🔒 Личная цель', style: TextStyle(fontWeight: FontWeight.w800)),
-                  subtitle: const Text('Видна только вам. В ленте гильдии — без названия'),
+                  subtitle: Text('Видна только вам. В ленте ${Words.groupGen} — без названия'),
                 ),
               ],
               const SizedBox(height: 12),

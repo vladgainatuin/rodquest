@@ -21,12 +21,12 @@ void main() {
     await tester.pumpWidget(RodquestApp(controller: game));
     await tester.pumpAndSettle();
 
-    expect(find.text('Название гильдии'), findsOneWidget);
+    expect(find.text('Название семьи'), findsOneWidget);
     await tester.enterText(find.byType(TextField).at(0), 'Дом Смелых');
     await tester.enterText(find.byType(TextField).at(1), 'Папа');
     await tester.pump();
     // Кнопка внизу прокручиваемого списка — сначала докручиваем до неё.
-    final startButton = find.text('Основать гильдию');
+    final startButton = find.text('Создать семью');
     await _scrollTo(tester, startButton);
     await tester.pumpAndSettle();
     await tester.tap(startButton);
@@ -36,7 +36,7 @@ void main() {
     expect(find.text('Семейный отпуск на море'), findsWidgets);
 
     // Все вкладки открываются без ошибок.
-    for (final tab in ['Квесты', 'Бюджет', 'Гильдия', 'Герой', 'Сегодня']) {
+    for (final tab in ['Квесты', 'Бюджет', 'Семья', 'Герой', 'Сегодня']) {
       await tester.tap(find.descendant(of: find.byType(NavigationBar), matching: find.text(tab)));
       await tester.pumpAndSettle();
     }
@@ -88,7 +88,7 @@ void main() {
     await tester.tap(find.text('Статистика'));
     await tester.pumpAndSettle();
     expect(find.text('📈 Опыт по дням'), findsOneWidget);
-    await tester.tap(find.text('🛡 Гильдия'));
+    await tester.tap(find.text('🏡 Семья'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Месяц'));
     await tester.pumpAndSettle();
@@ -152,7 +152,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('режим «Только я»: онбординг без гильдии, вкладка «Лавка» и черты характера', (tester) async {
+  testWidgets('режим «Только я»: онбординг без семьи, вкладка «Гильдия» с лавкой и черты характера', (tester) async {
     tester.view.physicalSize = const Size(1080, 2340);
     tester.view.devicePixelRatio = 2.6;
     addTearDown(tester.view.reset);
@@ -164,7 +164,7 @@ void main() {
 
     await tester.tap(find.text('Только я'));
     await tester.pumpAndSettle();
-    expect(find.text('Название гильдии'), findsNothing);
+    expect(find.text('Название семьи'), findsNothing);
     await tester.enterText(find.byType(TextField).first, 'Аня');
     await tester.pump();
     final start = find.text('Начать путь');
@@ -175,8 +175,12 @@ void main() {
 
     expect(game.solo, isTrue);
     final nav = find.byType(NavigationBar);
-    expect(find.descendant(of: nav, matching: find.text('Гильдия')), findsNothing);
-    expect(find.descendant(of: nav, matching: find.text('Лавка')), findsOneWidget);
+    expect(find.descendant(of: nav, matching: find.text('Гильдия')), findsOneWidget);
+    expect(find.descendant(of: nav, matching: find.text('Лавка')), findsNothing);
+    // v0.9: на вкладке «Гильдия» — вход в лавку наград себе.
+    await tester.tap(find.descendant(of: nav, matching: find.text('Гильдия')));
+    await tester.pumpAndSettle();
+    expect(find.text('Награды себе'), findsOneWidget);
 
     await tester.tap(find.descendant(of: nav, matching: find.text('Герой')));
     await tester.pumpAndSettle();
@@ -273,7 +277,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.descendant(of: find.byType(NavigationBar), matching: find.text('Герой')));
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(find.text('Родквест v0.7 · данные хранятся на этом устройстве'), 300,
+    await tester.scrollUntilVisible(find.text('Родквест v0.9 · данные хранятся на этом устройстве'), 300,
         scrollable: find.descendant(of: find.byType(HeroScreen), matching: find.byType(Scrollable)).first);
     await tester.pumpAndSettle();
     expect(find.text('Сохранить резервную копию'), findsOneWidget);
@@ -299,7 +303,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
     await tester.pumpAndSettle();
     expect(find.byType(SpiralSplash), findsNothing);
-    expect(find.text('Название гильдии'), findsOneWidget);
+    expect(find.text('Название семьи'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

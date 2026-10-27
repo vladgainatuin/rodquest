@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 
+import '../models/words.dart';
 import '../state/game_controller.dart';
 import '../theme.dart';
 import 'common.dart';
@@ -216,11 +217,11 @@ Future<void> _forgotPin(BuildContext context) async {
   if (ok) await game.resetForgottenPin();
   if (!context.mounted) return;
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-    content: Text(ok ? '🔓 PIN сброшен. Задайте новый в профиле главы гильдии.' : 'Ответ неверный'),
+    content: Text(ok ? '🔓 PIN сброшен. Задайте новый в профиле: ${Words.leader.toLowerCase()}.' : 'Ответ неверный'),
   ));
 }
 
-/// Настройки PIN для главы гильдии: включить, сменить, выключить.
+/// Настройки PIN для главы семьи: включить, сменить, выключить.
 Future<void> openPinSettings(BuildContext context) async {
   final game = GameScope.read(context);
   final messenger = ScaffoldMessenger.of(context);

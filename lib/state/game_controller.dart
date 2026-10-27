@@ -84,6 +84,76 @@ class GameController extends ChangeNotifier {
   AppState _state = AppState.empty();
   bool _ready = false;
 
+  // ---------- v0.8: синхронизация семьи ----------
+
+  /// Устройство сделало правку — синхронизация отправит её на сервер.
+  void Function()? onLocalChange;
+
+  /// На устройстве начал играть герой (его будильники звонят здесь).
+  void Function(String heroId)? onHeroActivated;
+
+  /// Перед сбросом всех данных — отключить устройство от облака,
+  /// иначе сброс уйдёт на сервер и сотрёт данные всей семьи.
+  Future<void> Function()? beforeReset;
+
+  /// Устройство юнги в облачной гильдии: взрослые профили и бюджет недоступны.
+  bool cloudKid = false;
+
+  /// Герои этого устройства в облачной гильдии; null — не подключено (все герои свои).
+  Set<String>? deviceHeroIds;
+
+  /// Состояние целиком — для синхронизации.
+  AppState get syncState => _state;
+
+  /// v0.9: слова «семья»/«клан» на экранах берутся из [Words] — обновляем их
+  /// при каждом изменении данных (в том числе пришедших с другого телефона).
+  @override
+  void notifyListeners() {
+    Words.kind = _state.groupKind;
+    super.notifyListeners();
+  }
+
+  bool _isDeviceHero(String heroId) => deviceHeroIds == null || deviceHeroIds!.contains(heroId);
+
+  /// Можно ли на этом устройстве играть за героя.
+  bool canSwitchTo(String heroId) {
+    final h = heroById(heroId);
+    if (h == null) return false;
+    return !(cloudKid && h.role.isAdult);
+  }
+
+  /// Пришли данные с сервера: заменить состояние. Активный герой и время
+  /// проверки будильников — свои у каждого устройства.
+  void replaceFromSync(AppState next, {bool fresh = false}) {
+    final now = _clock();
+    if (fresh) {
+      next
+        ..activeHeroId = null
+        ..remindersCheckedAt = now;
+      _lastTick = now;
+    } else {
+      next
+        ..activeHeroId = _state.activeHeroId
+        ..remindersCheckedAt = _state.remindersCheckedAt;
+    }
+    if (next.activeHeroId != null && !next.heroes.any((h) => h.id == next.activeHeroId)) {
+      final mine = next.heroes.where((h) => _isDeviceHero(h.id) && !(cloudKid && h.role.isAdult));
+      next.activeHeroId = mine.isEmpty ? null : mine.first.id;
+    }
+    _state = next;
+    if (_ready) notifyListeners();
+    unawaited(_repo.save(_state));
+  }
+
+  /// Выбрать героя этого устройства сразу после входа в гильдию по коду (без PIN).
+  bool claimHero(String heroId) {
+    if (!canSwitchTo(heroId)) return false;
+    _state.activeHeroId = heroId;
+    notifyListeners();
+    unawaited(_repo.save(_state));
+    return true;
+  }
+
   bool get ready => _ready;
   bool get needsOnboarding => _state.heroes.isEmpty;
   String get guildName => _state.guildName;
@@ -94,8 +164,11 @@ class GameController extends ChangeNotifier {
     return List.unmodifiable(_state.goals.where((g) => !g.isPrivate || g.ownerId == me));
   }
 
-  /// Личный режим «Только я»: без гильдии, юнг и семейных целей.
+  /// Личный режим «Только я»: без семьи, юнг и семейных целей.
   bool get solo => _state.solo;
+
+  /// v0.9: своя группа называется «Семья» или «Клан».
+  GroupKind get groupKind => _state.groupKind;
   List<FeedEvent> get feed => List.unmodifiable(_state.feed);
   DateTime get now => _clock();
 
@@ -195,7 +268,7 @@ class GameController extends ChangeNotifier {
   Future<void> load() async {
     _state = await _repo.load() ?? AppState.empty();
     // Миграция с v1: у старых гильдий ещё нет категорий бюджета.
-    if (_state.heroes.isNotEmpty) _ensureBudgetDefaults();
+    if (_state.heroes.isNotEmpty && !cloudKid) _ensureBudgetDefaults();
     // Миграция с v2: достижения, полученные раньше, записываем без поздравлений.
     for (final h in _state.heroes) {
       _checkBadges(h, log: false);
@@ -211,6 +284,7 @@ class GameController extends ChangeNotifier {
     if (_lastTick != null) _state.remindersCheckedAt = _lastTick;
     notifyListeners();
     await _repo.save(_state);
+    onLocalChange?.call();
     if (_background) unawaited(push.schedule(plannedPushes()));
   }
 
@@ -224,9 +298,10 @@ class GameController extends ChangeNotifier {
   /// Что звенит, пока приложение закрыто: будильники, напоминания,
   /// конец таймера, сроки целей.
   List<PlannedPush> plannedPushes() => PushRules.plan(
-        reminders: _state.reminders,
-        timers: _state.timers,
-        goals: _state.goals,
+        // В облачной гильдии звонят только будильники героев этого устройства.
+        reminders: [for (final r in _state.reminders) if (_isDeviceHero(r.heroId)) r],
+        timers: [for (final t in _state.timers) if (_isDeviceHero(t.heroId)) t],
+        goals: [for (final g in _state.goals) if (g.isFamily || _isDeviceHero(g.ownerId)) g],
         heroes: _state.heroes,
         now: _clock(),
       );
@@ -249,7 +324,7 @@ class GameController extends ChangeNotifier {
 
   // ---------- v6: резервная копия ----------
 
-  /// Сохранять и восстанавливать данные может глава гильдии (в личном режиме — сам герой).
+  /// Сохранять и восстанавливать данные может глава семьи (в личном режиме — сам герой).
   bool get canBackup => activeHero?.role.canApprove ?? false;
 
   /// Все данные устройства одним файлом JSON.
@@ -258,7 +333,7 @@ class GameController extends ChangeNotifier {
   String get backupFileName => Backup.fileName(_clock());
 
   /// Заменить все данные устройства копией. На новом устройстве (до создания
-  /// гильдии) — может любой; потом — только глава гильдии.
+  /// семьи) — может любой; потом — только глава семьи.
   Future<bool> restoreBackup(BackupData data) async {
     if (!needsOnboarding && !canBackup) return false;
     _state = data.state;
@@ -426,7 +501,7 @@ class GameController extends ChangeNotifier {
     return PinCheck.wrong;
   }
 
-  /// Задать или сменить PIN. Только глава гильдии; при смене нужен старый PIN.
+  /// Задать или сменить PIN. Только глава семьи; при смене нужен старый PIN.
   Future<bool> setParentPin(String pin, {String? oldPin}) async {
     if (activeHero?.role.canApprove != true || !isValidPin(pin)) return false;
     if (hasParentPin && checkPin(oldPin ?? '') != PinCheck.ok) return false;
@@ -438,7 +513,7 @@ class GameController extends ChangeNotifier {
     return true;
   }
 
-  /// Выключить PIN (глава гильдии, с вводом текущего PIN).
+  /// Выключить PIN (глава семьи, с вводом текущего PIN).
   Future<bool> removeParentPin(String pin) async {
     if (activeHero?.role.canApprove != true || !hasParentPin) return false;
     if (checkPin(pin) != PinCheck.ok) return false;
@@ -461,13 +536,18 @@ class GameController extends ChangeNotifier {
     await _commit();
   }
 
-  // ---------- Гильдия и герои ----------
+  // ---------- Семья (клан) и герои ----------
+
+  /// «создал(а) семью «Х»» / «основал(а) клан «Х»».
+  static String _foundedText(GroupKind kind, String name) =>
+      kind == GroupKind.clan ? 'основал(а) клан «$name»' : 'создал(а) семью «$name»';
 
   Future<void> createGuild({
     required String guildName,
     required String heroName,
     required String avatar,
     bool solo = false,
+    GroupKind kind = GroupKind.family,
   }) async {
     final hero = HeroProfile(
       id: _id(),
@@ -482,19 +562,20 @@ class GameController extends ChangeNotifier {
       feed: [],
       activeHeroId: hero.id,
       solo: solo,
+      groupKind: kind,
     );
     _ensureBudgetDefaults();
-    _log(hero.id, solo ? '🧭' : '🛡',
-        solo ? 'начал(а) свой путь героя' : 'основал(а) гильдию «${_state.guildName}»');
+    _log(hero.id, solo ? '🧭' : kind.emoji, solo ? 'начал(а) свой путь героя' : _foundedText(kind, _state.guildName));
     await _commit();
   }
 
-  /// Превратить личный путь в семейную гильдию (или обратно, пока герой один).
-  Future<bool> setSolo(bool value, {String? guildName}) async {
+  /// Превратить личный путь в семью или клан (или обратно, пока герой один).
+  Future<bool> setSolo(bool value, {String? guildName, GroupKind? kind}) async {
     if (value == _state.solo) return true;
     if (value && _state.heroes.length > 1) return false;
     _state.solo = value;
     if (!value && guildName != null && guildName.trim().isNotEmpty) _state.guildName = guildName.trim();
+    if (!value && kind != null) _state.groupKind = kind;
     if (value) {
       // В личном режиме нет семейных целей и PIN.
       for (final g in _state.goals) {
@@ -505,7 +586,7 @@ class GameController extends ChangeNotifier {
         ..parentPinSalt = null;
     }
     final me = activeHero;
-    if (me != null && !value) _log(me.id, '🛡', 'основал(а) гильдию «${_state.guildName}»');
+    if (me != null && !value) _log(me.id, _state.groupKind.emoji, _foundedText(_state.groupKind, _state.guildName));
     await _commit();
     return true;
   }
@@ -516,10 +597,12 @@ class GameController extends ChangeNotifier {
     required HeroRole role,
   }) async {
     final hero = HeroProfile(id: _id(), name: name.trim(), avatar: avatar, role: role);
-    // Новый член семьи превращает личный путь в гильдию.
+    // Новый член семьи превращает личный путь в семью.
     _state.solo = false;
     _state.heroes.add(hero);
-    _log(hero.id, '🎉', 'вступил(а) в гильдию как «${role.label}»');
+    _log(hero.id, '🎉', 'вступил(а) в ${Words.groupAcc} как «${role.label}»');
+    // Героя завели на этом устройстве — его будильники звонят здесь.
+    onHeroActivated?.call(hero.id);
     await _commit();
     return hero;
   }
@@ -531,6 +614,8 @@ class GameController extends ChangeNotifier {
     HeroRole? role,
     AppSkin? skin,
   }) async {
+    // v0.8: пока экран был открыт, синхронизация могла заменить объект — берём актуальный.
+    hero = heroById(hero.id) ?? hero;
     if (name != null && name.trim().isNotEmpty) hero.name = name.trim();
     if (avatar != null) hero.avatar = avatar;
     if (role != null) hero.role = role;
@@ -557,9 +642,10 @@ class GameController extends ChangeNotifier {
   /// Переключить активного героя. Если нужен PIN ([needsPinToSwitch]),
   /// без верного [pin] переключение не произойдёт.
   Future<bool> switchHero(String heroId, {String? pin}) async {
-    if (heroById(heroId) == null) return false;
+    if (!canSwitchTo(heroId)) return false;
     if (needsPinToSwitch(heroId) && checkPin(pin ?? '') != PinCheck.ok) return false;
     _state.activeHeroId = heroId;
+    onHeroActivated?.call(heroId);
     await _commit();
     return true;
   }
@@ -568,6 +654,17 @@ class GameController extends ChangeNotifier {
     if (name.trim().isEmpty) return;
     _state.guildName = name.trim();
     await _commit();
+  }
+
+  /// v0.9: назвать группу «Семьёй» или «Кланом» — решает глава.
+  Future<bool> setGroupKind(GroupKind kind) async {
+    final me = activeHero;
+    if (me == null || !me.role.canApprove || _state.solo) return false;
+    if (kind == _state.groupKind) return true;
+    _state.groupKind = kind;
+    _log(me.id, kind.emoji, kind == GroupKind.clan ? 'теперь мы — клан!' : 'теперь мы — семья!');
+    await _commit();
+    return true;
   }
 
   // ---------- Цели ----------
@@ -597,6 +694,7 @@ class GameController extends ChangeNotifier {
     List<int> weekdays = const [],
     int? monthDay,
     LifeArea? area,
+    int perPeriod = 1,
   }) async {
     final parent = goalById(parentId);
     final validParent = parent != null && tier.allowedParents.contains(parent.tier) ? parent : null;
@@ -621,6 +719,8 @@ class GameController extends ChangeNotifier {
       monthDay: tier == GoalTier.daily ? mDay : null,
       // Шаг без своего раздела наследует раздел родителя.
       area: area ?? validParent?.area,
+      // v6: сколько раз за период — выбирает взрослый.
+      perPeriod: tier == GoalTier.daily && (activeHero?.role.isAdult ?? true) ? perPeriod : 1,
     );
     _state.goals.add(goal);
     if (tier.rank <= GoalTier.epic.rank) {
@@ -647,7 +747,10 @@ class GameController extends ChangeNotifier {
     List<int>? weekdays,
     int? monthDay,
     Object? area = _keep,
+    int? perPeriod,
   }) async {
+    // v0.8: пока экран был открыт, синхронизация могла заменить объект — берём актуальный.
+    goal = goalById(goal.id) ?? goal;
     final parent = goalById(parentId);
     final invalidParent = parent == null ||
         !tier.allowedParents.contains(parent.tier) ||
@@ -676,6 +779,11 @@ class GameController extends ChangeNotifier {
       ..weekdays = tier == GoalTier.daily ? days : []
       ..monthDay = tier == GoalTier.daily ? mDay : null;
     if (!identical(area, _keep)) goal.area = area is LifeArea ? area : null;
+    if (tier != GoalTier.daily) {
+      goal.perPeriod = 1;
+    } else if (perPeriod != null && (activeHero?.role.isAdult ?? false)) {
+      goal.perPeriod = perPeriod.clamp(0, Goal.maxPerPeriod);
+    }
     // Вложенные цели наследуют «личность» родителя.
     for (final id in GameRules.descendantIds(goal.id, _state.goals)) {
       final k = goalById(id)!;
@@ -825,34 +933,27 @@ class GameController extends ChangeNotifier {
   /// Отметить рутину в текущем периоде (сегодня / на этой неделе / в этом месяце).
   /// Повторное нажатие снимает отметку. Ежедневную по дням недели можно
   /// отметить только в выбранные дни.
+  ///
+  /// v6: многоразовую рутину («2 раза в день», «без ограничения») каждое нажатие
+  /// отмечает ещё раз, пока не наберётся заданное число; потом нажатие снимает
+  /// последнюю отметку. Снять отметку в любой момент — [undoDaily].
   Future<CompletionResult> toggleDaily(String id) async {
     final goal = goalById(id);
     final hero = activeHero;
     final result = CompletionResult();
     if (goal == null || hero == null || !goal.isDaily) return result;
     final now = _clock();
-    final anchor = GameRules.periodAnchor(goal, now);
-    final key = GameRules.dayKey(anchor);
-
-    if (goal.lastDoneDay == key) {
-      // Отмена: возвращаем ровно то, что начислили (опыт, монеты, черты).
-      final rec = _unrecord(goal.id, hero.id);
-      final xp = rec?.xp ?? GameRules.repeatXp(goal, goal.streak);
-      _award(hero, goal.stat, -xp);
-      hero.coins = max(0, hero.coins - (rec?.coins ?? goal.repeat.coins));
-      for (final e in (rec?.traits ?? const <HeroTrait, int>{}).entries) {
-        hero.traitXp[e.key] = max(0, (hero.traitXp[e.key] ?? 0) - e.value);
-      }
-      goal.streak = max(0, goal.streak - 1);
-      goal.lastDoneDay = goal.streak > 0 ? GameRules.dayKey(GameRules.previousAnchor(goal, anchor)) : null;
-      await _commit();
-      return result;
-    }
+    final done = GameRules.timesDone(goal, now);
+    if (done > 0 && done >= goal.periodLimit) return undoDaily(id);
+    if (done > 0 && goal.perPeriod == 1) return undoDaily(id);
     if (!GameRules.canDoNow(goal, now)) return result;
+    if (done > 0) return _repeatDaily(goal, hero, done);
 
+    final anchor = GameRules.periodAnchor(goal, now);
     goal.streak = GameRules.nextStreak(goal, now);
     goal.bestStreak = max(goal.bestStreak, goal.streak);
-    goal.lastDoneDay = key;
+    goal.lastDoneDay = GameRules.dayKey(anchor);
+    goal.doneCount = 1;
     final xp = GameRules.repeatXp(goal, goal.streak);
     final coins = goal.repeat.coins;
     final onTime = GameRules.isPlannedDay(goal, now);
@@ -881,6 +982,60 @@ class GameController extends ChangeNotifier {
     return result;
   }
 
+  /// Ещё одно выполнение многоразовой рутины в том же периоде: базовый опыт
+  /// и монеты, +1 к привычке. Серия и пунктуальность считаются один раз за период.
+  Future<CompletionResult> _repeatDaily(Goal goal, HeroProfile hero, int done) async {
+    final result = CompletionResult();
+    goal.doneCount = done + 1;
+    final xp = GameRules.repeatAgainXp(goal);
+    final coins = goal.repeat.coins;
+    const traits = {HeroTrait.habit: 1};
+    hero.traitXp[HeroTrait.habit] = (hero.traitXp[HeroTrait.habit] ?? 0) + 1;
+    result
+      ..xp = xp
+      ..coins = coins
+      ..traits.addAll(traits);
+    hero.coins += coins;
+    result.newLevel = _award(hero, goal.stat, xp);
+    _record(hero, goal, xp, coins, traits: traits);
+    result.badges.addAll(_checkBadges(hero));
+    if (goal.perPeriod > 1 && goal.doneCount == goal.perPeriod && !goal.isPrivate) {
+      _log(hero.id, '✅', 'выполнил(а) «${goal.title}» ${GameRules.perPeriodLabel(goal)}', xp: xp);
+    }
+    await _commit();
+    return result;
+  }
+
+  /// Снять последнюю отметку рутины в текущем периоде: возвращается ровно то,
+  /// что за неё начислили (опыт, монеты, черты).
+  Future<CompletionResult> undoDaily(String id) async {
+    final goal = goalById(id);
+    final hero = activeHero;
+    final result = CompletionResult();
+    if (goal == null || hero == null || !goal.isDaily) return result;
+    final now = _clock();
+    final done = GameRules.timesDone(goal, now);
+    if (done == 0) return result;
+    final rec = _unrecord(goal.id, hero.id);
+    final xp = rec?.xp ?? (done > 1 ? GameRules.repeatAgainXp(goal) : GameRules.repeatXp(goal, goal.streak));
+    _award(hero, goal.stat, -xp);
+    hero.coins = max(0, hero.coins - (rec?.coins ?? goal.repeat.coins));
+    for (final e in (rec?.traits ?? const <HeroTrait, int>{}).entries) {
+      hero.traitXp[e.key] = max(0, (hero.traitXp[e.key] ?? 0) - e.value);
+    }
+    if (done > 1) {
+      goal.doneCount = done - 1;
+    } else {
+      final anchor = GameRules.periodAnchor(goal, now);
+      goal.streak = max(0, goal.streak - 1);
+      goal.lastDoneDay = goal.streak > 0 ? GameRules.dayKey(GameRules.previousAnchor(goal, anchor)) : null;
+      // Сколько раз сделали в прошлом периоде, уже не важно — там рутина выполнена.
+      goal.doneCount = goal.lastDoneDay == null ? 0 : 1;
+    }
+    await _commit();
+    return result;
+  }
+
   // ---------- Лут: лавка наград ----------
 
   bool get canManageRewards => activeHero?.role.isAdult ?? false;
@@ -895,6 +1050,8 @@ class GameController extends ChangeNotifier {
   }
 
   Future<void> updateReward(Reward r, {required String title, required String emoji, required int cost}) async {
+    // v0.8: пока экран был открыт, синхронизация могла заменить объект — берём актуальный.
+    r = _state.rewards.firstWhere((x) => x.id == r.id, orElse: () => r);
     if (!canManageRewards || title.trim().isEmpty || cost <= 0) return;
     r
       ..title = title.trim()
@@ -1172,6 +1329,8 @@ class GameController extends ChangeNotifier {
   }
 
   Future<void> updatePot(SavingsPot pot, {required String name, required String emoji, required int target, String? goalId}) async {
+    // v0.8: пока экран был открыт, синхронизация могла заменить объект — берём актуальный.
+    pot = potById(pot.id) ?? pot;
     if (!canSeeBudget || name.trim().isEmpty || target <= 0) return;
     pot
       ..name = name.trim()
@@ -1285,6 +1444,8 @@ class GameController extends ChangeNotifier {
     bool wakeUp = false,
     int snoozeMinutes = 5,
   }) async {
+    // v0.8: пока экран был открыт, синхронизация могла заменить объект — берём актуальный.
+    r = reminderById(r.id) ?? r;
     if (!canEditReminder(r)) return;
     r
       ..title = title.trim().isEmpty ? kind.label : title.trim()
@@ -1334,6 +1495,7 @@ class GameController extends ChangeNotifier {
     _lastTick = now;
     final events = <TickEvent>[];
     for (final r in _state.reminders) {
+      if (!_isDeviceHero(r.heroId)) continue;
       final at = TimeRules.firedBetween(r, since, now);
       if (at == null) continue;
       final snooze = r.snoozedUntil;
@@ -1352,6 +1514,7 @@ class GameController extends ChangeNotifier {
       ));
     }
     for (final t in _state.timers) {
+      if (!_isDeviceHero(t.heroId)) continue;
       if (t.mode == TimerMode.countdown && !t.rang && !t.paused && t.leftSec(now) <= 0) {
         t.rang = true;
         events.add(TickEvent(kind: TickKind.timerDone, at: now, timer: t));
@@ -1361,6 +1524,7 @@ class GameController extends ChangeNotifier {
       _state.remindersCheckedAt = now;
       notifyListeners();
       _repo.save(_state);
+      onLocalChange?.call();
     }
     return events;
   }
@@ -1611,6 +1775,8 @@ class GameController extends ChangeNotifier {
     HeroStat? stat,
     LifeArea? area,
   }) async {
+    // v0.8: пока экран был открыт, синхронизация могла заменить объект — берём актуальный.
+    s = skillById(s.id) ?? s;
     if (name.trim().isEmpty || s.heroId != activeHero?.id) return;
     s
       ..name = name.trim()
@@ -1706,9 +1872,56 @@ class GameController extends ChangeNotifier {
     await _commit();
   }
 
+  // ---------- v0.9: вклад в цели гильдии ----------
+
+  /// Опыт за вклад в цель гильдии: каждый вклад — +[guildXp] XP и [guildCoins] 🪙
+  /// (прокачивает 💬 харизму), не больше [guildXpPerDay] XP в день — чтобы
+  /// вклад был делом, а не кнопкой для опыта. Сам вклад отправляет облако.
+  static const guildXp = 10, guildCoins = 3, guildXpPerDay = 60;
+
+  CompletionResult rewardGuildContribution({
+    required String goalId,
+    required String title,
+    required int amount,
+    required String unit,
+    bool completed = false,
+  }) {
+    final hero = activeHero;
+    final result = CompletionResult();
+    if (hero == null) return result;
+    final left = max(0, guildXpPerDay - _todayXp(hero.id, XpKind.guild));
+    final xp = min(guildXp, left);
+    final coins = xp <= 0 ? 0 : guildCoins;
+    if (xp > 0) {
+      hero.coins += coins;
+      result
+        ..xp = xp
+        ..coins = coins;
+      result.newLevel = _award(hero, HeroStat.charisma, xp);
+      _recordOther(hero, XpKind.guild, 'ally:$goalId:${_id()}', HeroStat.charisma, xp, coins);
+      result.badges.addAll(_checkBadges(hero));
+    }
+    _log(hero.id, completed ? '🏆' : '🏰',
+        completed
+            ? 'завершил(а) цель гильдии «$title»!'
+            : 'внёс(ла) вклад в цель гильдии «$title»: $amount $unit',
+        xp: xp);
+    unawaited(_commit());
+    return result;
+  }
+
+  /// Записать в ленту семьи событие гильдии (вступили, вышли, стали главой…).
+  Future<void> logGuildEvent(String emoji, String text) async {
+    final me = activeHero;
+    if (me == null) return;
+    _log(me.id, emoji, text);
+    await _commit();
+  }
+
   // ---------- Сервисное ----------
 
   Future<void> resetAll() async {
+    await beforeReset?.call();
     await _repo.clear();
     _state = AppState.empty();
     notifyListeners();
@@ -1726,7 +1939,7 @@ class GameController extends ChangeNotifier {
       isFamily: true,
       stat: HeroStat.charisma,
       area: LifeArea.travel,
-      description: 'Летом всей гильдией едем к морю!',
+      description: 'Летом всей семьёй едем к морю!',
     );
     final epic1 = await addGoal(
         title: 'Накопить на путешествие',

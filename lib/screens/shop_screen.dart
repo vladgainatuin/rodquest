@@ -6,7 +6,7 @@ import '../theme.dart';
 import '../widgets/common.dart';
 import 'today_screen.dart';
 
-/// Лавка наград для взрослых открывается отдельным экраном из «Гильдии».
+/// Лавка наград для взрослых открывается отдельным экраном из «Семьи» (клана).
 void openShop(BuildContext context) {
   Navigator.of(context).push(
     MaterialPageRoute<void>(

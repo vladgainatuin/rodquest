@@ -22,6 +22,7 @@ class BackupData {
 
   String get guildName => state.guildName;
   bool get solo => state.solo;
+  GroupKind get groupKind => state.groupKind;
   int get heroCount => state.heroes.length;
   int get goalCount => state.goals.length;
   int get doneCount => state.goals.where((g) => g.done).length;
@@ -31,14 +32,14 @@ class BackupData {
 
 /// Резервная копия всех данных устройства в файл JSON (версия 0.6).
 ///
-/// В файле — гильдия, герои, цели, лента, лавка, бюджет, журнал опыта,
+/// В файле — семья (клан), герои, цели, лента, лавка, бюджет, журнал опыта,
 /// будильники, таймеры и навыки. PIN родителя — только хэш, как и на устройстве.
 class Backup {
   const Backup._();
 
   static const app = 'rodquest';
   static const format = 1;
-  static const appVersion = '0.7.0';
+  static const appVersion = '0.9.0';
   static const fileExtension = 'json';
 
   /// Резервная копия не может быть больше — защита от случайного выбора

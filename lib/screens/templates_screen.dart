@@ -148,8 +148,8 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
                         family = v;
                         if (v) private = false;
                       }),
-                      title: const Text('🛡 Семейная цель', style: TextStyle(fontWeight: FontWeight.w800)),
-                      subtitle: const Text('Идти к ней всей гильдией'),
+                      title: Text('${Words.emoji} ${Words.sharedGoal}', style: const TextStyle(fontWeight: FontWeight.w800)),
+                      subtitle: Text('Идти к ней всей ${Words.clan ? 'командой' : 'семьёй'}'),
                     ),
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,

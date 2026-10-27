@@ -5,13 +5,19 @@ import '../models/models.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 import '../widgets/pin_pad.dart';
+import 'alliance_screen.dart';
+import 'cloud_screen.dart';
 import 'goal_detail_screen.dart';
 import 'onboarding_screen.dart';
 import 'shop_screen.dart';
 import 'stats_screen.dart';
 
-class GuildScreen extends StatelessWidget {
-  const GuildScreen({super.key});
+/// Вкладка «Семья» («Клан»): герои, общие цели, лента, облако и вход в гильдию.
+///
+/// До v0.9 семья называлась гильдией. Теперь гильдия — уровень выше:
+/// союз семей, кланов и одиночек (см. alliance_screen.dart).
+class FamilyScreen extends StatelessWidget {
+  const FamilyScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -33,14 +39,14 @@ class GuildScreen extends StatelessWidget {
           borderColor: RqColors.p.tintCardBorder,
           child: Row(
             children: [
-              const Text('🛡', style: TextStyle(fontSize: 42)),
+              Text(Words.emoji, style: const TextStyle(fontSize: 42)),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(game.guildName, style: Theme.of(context).textTheme.titleLarge),
-                    Text('${heroes.length} ${_heroWord(heroes.length)} · $totalXp XP гильдии',
+                    Text('${Words.group} · ${heroes.length} ${_heroWord(heroes.length)} · $totalXp XP',
                         style: Theme.of(context).textTheme.bodySmall),
                   ],
                 ),
@@ -54,8 +60,12 @@ class GuildScreen extends StatelessWidget {
             ],
           ),
         ),
+        // v0.8: синхронизация семьи.
+        const CloudCard(),
+        // v0.9: гильдия — союз семей, кланов и одиночек.
+        const AllianceCard(),
         SectionTitle(
-          '⚔️ Герои гильдии',
+          '⚔️ ${Words.people}',
           trailing: me.role.canApprove
               ? TextButton.icon(
                   onPressed: () => openHeroEditor(context),
@@ -70,7 +80,7 @@ class GuildScreen extends StatelessWidget {
           child: TextButton.icon(
             onPressed: () => openStats(context, guild: true),
             icon: const Text('📈'),
-            label: const Text('Итоги гильдии: кто сколько сделал за неделю и месяц'),
+            label: Text('Итоги ${Words.groupGen}: кто сколько сделал за неделю и месяц'),
           ),
         ),
         if (me.role.isAdult) ...[
@@ -100,11 +110,13 @@ class GuildScreen extends StatelessWidget {
             ),
           ),
         ],
-        const SectionTitle('🏰 Семейные цели'),
+        SectionTitle('${Words.emoji} ${Words.sharedGoals}'),
         if (familyGoals.isEmpty)
-          const EmptyHint(emoji: '🤝', text: 'Создайте цель с отметкой «Семейная» — к ней будет идти вся гильдия.'),
+          EmptyHint(
+              emoji: '🤝',
+              text: 'Создайте цель с отметкой «${Words.sharedGoal}» — к ней ${Words.clan ? 'пойдёт весь клан' : 'пойдёт вся семья'}.'),
         for (final g in familyGoals) _FamilyGoalCard(goal: g),
-        const SectionTitle('📣 Лента гильдии'),
+        SectionTitle('📣 Лента ${Words.groupGen}'),
         if (feed.isEmpty) const EmptyHint(emoji: '📭', text: 'Пока тихо. Выполните первое задание!'),
         for (final e in feed) _FeedTile(event: e),
       ],
@@ -124,7 +136,7 @@ class GuildScreen extends StatelessWidget {
     final name = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Название гильдии'),
+        title: Text('Название ${Words.groupGen}'),
         content: TextField(controller: ctrl, autofocus: true),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
@@ -201,7 +213,7 @@ class _MemberTile extends StatelessWidget {
           children: [
             Text('${hero.avatar} ${hero.name}', style: Theme.of(ctx).textTheme.titleLarge),
             const SizedBox(height: 8),
-            if (!isMe)
+            if (!isMe && game.canSwitchTo(hero.id))
               ListTile(
                 leading: const Text('🎮', style: TextStyle(fontSize: 24)),
                 title: const Text('Играть за этого героя', style: TextStyle(fontWeight: FontWeight.w800)),
@@ -225,9 +237,9 @@ class _MemberTile extends StatelessWidget {
             if (me.role.canApprove && !isMe)
               ListTile(
                 leading: const Text('🚪', style: TextStyle(fontSize: 24)),
-                title: Text('Исключить из гильдии',
+                title: Text('Исключить из ${Words.groupGen}',
                     style: TextStyle(fontWeight: FontWeight.w800, color: RqColors.danger)),
-                subtitle: const Text('Его цели перейдут главе гильдии'),
+                subtitle: Text('Его цели перейдут: ${Words.leader.toLowerCase()}'),
                 onTap: () {
                   Navigator.pop(ctx);
                   game.removeHero(hero.id);
@@ -433,7 +445,7 @@ class _HeroEditorState extends State<_HeroEditor> {
                 const SizedBox(height: 6),
                 Text(
                   switch (_role) {
-                    HeroRole.leader => 'Управляет гильдией и подтверждает задания юнг.',
+                    HeroRole.leader => 'Управляет ${Words.clan ? 'кланом' : 'семьёй'} и подтверждает задания юнг.',
                     HeroRole.member => 'Взрослый участник: выполняет и создаёт цели.',
                     HeroRole.child => 'Ребёнок: задания засчитываются после подтверждения главы.',
                   },
@@ -444,7 +456,7 @@ class _HeroEditorState extends State<_HeroEditor> {
               AvatarPicker(selected: _avatar, onSelected: (a) => setState(() => _avatar = a)),
               const SizedBox(height: 20),
               ChunkyButton(
-                label: widget.hero == null ? 'Принять в гильдию' : 'Сохранить',
+                label: widget.hero == null ? 'Принять в ${Words.groupAcc}' : 'Сохранить',
                 icon: _avatar,
                 onPressed: _name.text.trim().isEmpty ? null : _save,
               ),

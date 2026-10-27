@@ -5,7 +5,9 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'logic/game_rules.dart';
 import 'models/models.dart';
+import 'screens/alliance_screen.dart';
 import 'screens/budget_screen.dart';
+import 'screens/cloud_screen.dart';
 import 'screens/guild_screen.dart';
 import 'screens/hero_screen.dart';
 import 'screens/onboarding_screen.dart';
@@ -14,6 +16,8 @@ import 'screens/shop_screen.dart';
 import 'screens/timer_screen.dart';
 import 'screens/today_screen.dart';
 import 'state/game_controller.dart';
+import 'sync/cloud_scope.dart';
+import 'sync/sync_engine.dart';
 import 'theme.dart';
 import 'widgets/common.dart';
 import 'widgets/effects.dart';
@@ -23,9 +27,12 @@ import 'widgets/ring.dart';
 import 'widgets/spiral_splash.dart';
 
 class RodquestApp extends StatefulWidget {
-  const RodquestApp({super.key, required this.controller});
+  const RodquestApp({super.key, required this.controller, this.cloud});
 
   final GameController controller;
+
+  /// v0.8: синхронизация семьи (нет — приложение работает только на устройстве).
+  final SyncEngine? cloud;
 
   @override
   State<RodquestApp> createState() => _RodquestAppState();
@@ -40,10 +47,11 @@ class _RodquestAppState extends State<RodquestApp> {
   @override
   Widget build(BuildContext context) {
     final controller = widget.controller;
-    return GameScope(
+    final cloud = widget.cloud;
+    final Widget app = GameScope(
       controller: controller,
       child: ListenableBuilder(
-        listenable: controller,
+        listenable: cloud == null ? controller : Listenable.merge([controller, cloud]),
         builder: (context, _) {
           if (_splash) {
             return MaterialApp(
@@ -77,6 +85,7 @@ class _RodquestAppState extends State<RodquestApp> {
         },
       ),
     );
+    return cloud == null ? app : CloudScope(cloud: cloud, child: app);
   }
 }
 
@@ -88,6 +97,8 @@ class _Root extends StatelessWidget {
     final game = GameScope.of(context);
     if (!game.ready) return const Scaffold(backgroundColor: SpiralSplash.background);
     if (game.needsOnboarding) return const OnboardingScreen();
+    // v0.8: вошли в семью по коду — сначала выбрать, кто играет на устройстве.
+    if (CloudScope.of(context)?.needsHeroPick ?? false) return const HeroPickScreen();
     return const HomeShell();
   }
 }
@@ -151,9 +162,11 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     switch (state) {
       case AppLifecycleState.resumed:
         game.setBackground(false);
+        CloudScope.read(context)?.setForeground(true);
         _tick();
       case AppLifecycleState.hidden || AppLifecycleState.paused || AppLifecycleState.detached:
         game.setBackground(true);
+        CloudScope.read(context)?.setForeground(false);
       case AppLifecycleState.inactive:
         break;
     }
@@ -217,22 +230,23 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
           icon: Icons.storefront_outlined,
           page: ShopScreen(),
         ),
-      // В личном режиме гильдии нет — вместо неё лавка наград себе.
+      // v0.9: в личном режиме своей семьи нет — вместо неё гильдия (союз героев)
+      // и вход в лавку наград себе.
       if (solo)
         const _Tab(
-          label: 'Лавка',
-          title: 'Награды себе',
-          emoji: '🏪',
-          icon: Icons.storefront_outlined,
-          page: ShopScreen(),
+          label: 'Гильдия',
+          title: 'Гильдия',
+          emoji: '🏰',
+          icon: Icons.shield_outlined,
+          page: AllianceView(showShop: true),
         )
       else
         _Tab(
-          label: 'Гильдия',
-          title: 'Гильдия',
-          emoji: '🛡',
+          label: Words.group,
+          title: Words.group,
+          emoji: Words.emoji,
           icon: Icons.groups_outlined,
-          page: const GuildScreen(),
+          page: const FamilyScreen(),
           fab: adult ? _Fab.goal : _Fab.none,
         ),
       const _Tab(
@@ -274,12 +288,13 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
             padding: const EdgeInsets.only(right: 4),
             child: Center(child: CoinTargetBox(child: CoinBadge(hero.coins))),
           ),
-          if (game.heroes.length > 1)
+          if (game.heroes.where((h) => game.canSwitchTo(h.id)).length > 1)
             PopupMenuButton<String>(
               tooltip: 'Сменить героя',
               onSelected: (id) => switchHeroGuarded(context, id),
               itemBuilder: (_) => [
                 for (final h in game.heroes)
+                  if (game.canSwitchTo(h.id))
                   PopupMenuItem(
                     value: h.id,
                     child: Text(

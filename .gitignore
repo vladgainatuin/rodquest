@@ -46,3 +46,9 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Родквест 0.8: сервер
+server/mail.txt
+server/deploy_log.txt
+server/*.db
+__pycache__/

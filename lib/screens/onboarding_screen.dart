@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../models/words.dart';
+import '../sync/cloud_scope.dart';
 import '../theme.dart';
 import '../widgets/backup_ui.dart';
 import '../widgets/common.dart';
+import 'cloud_screen.dart';
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -17,6 +20,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   String _avatar = heroAvatars.first;
   bool _demo = true;
   bool _solo = false;
+  GroupKind _kind = GroupKind.family;
   bool _busy = false;
 
   @override
@@ -32,7 +36,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     if (!_valid || _busy) return;
     setState(() => _busy = true);
     final game = GameScope.read(context);
-    await game.createGuild(guildName: _solo ? '' : _guild.text, heroName: _name.text, avatar: _avatar, solo: _solo);
+    await game.createGuild(
+        guildName: _solo ? '' : _guild.text, heroName: _name.text, avatar: _avatar, solo: _solo, kind: _kind);
     if (_demo) await game.seedDemo();
   }
 
@@ -64,17 +69,34 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 Text('Для кого Родквест?', style: theme.textTheme.titleMedium),
                 const SizedBox(height: 8),
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
                       child: _ModeCard(
                         emoji: '👨‍👩‍👧',
                         title: 'Семья',
-                        text: 'Гильдия, дети-юнги, общие цели',
-                        selected: !_solo,
-                        onTap: () => setState(() => _solo = false),
+                        text: 'Дети-юнги, общие цели',
+                        selected: !_solo && _kind == GroupKind.family,
+                        onTap: () => setState(() {
+                          _solo = false;
+                          _kind = GroupKind.family;
+                        }),
                       ),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _ModeCard(
+                        emoji: '⚔️',
+                        title: 'Клан',
+                        text: 'Друзья, соседи, команда',
+                        selected: !_solo && _kind == GroupKind.clan,
+                        onTap: () => setState(() {
+                          _solo = false;
+                          _kind = GroupKind.clan;
+                        }),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
                     Expanded(
                       child: _ModeCard(
                         emoji: '🧭',
@@ -88,12 +110,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 ),
                 const SizedBox(height: 18),
                 if (!_solo) ...[
-                  Text('Название гильдии', style: theme.textTheme.titleMedium),
+                  Text(_kind == GroupKind.clan ? 'Название клана' : 'Название семьи', style: theme.textTheme.titleMedium),
                   const SizedBox(height: 8),
                   TextField(
                     controller: _guild,
                     textCapitalization: TextCapitalization.words,
-                    decoration: const InputDecoration(hintText: 'Например: Дом Смелых'),
+                    decoration: InputDecoration(
+                        hintText: _kind == GroupKind.clan ? 'Например: Клан Северных Волков' : 'Например: Дом Смелых'),
                     onChanged: (_) => setState(() {}),
                   ),
                   const SizedBox(height: 18),
@@ -123,19 +146,31 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 ),
                 const SizedBox(height: 16),
                 ChunkyButton(
-                  label: _busy ? 'Создаём…' : (_solo ? 'Начать путь' : 'Основать гильдию'),
+                  label: _busy
+                      ? 'Создаём…'
+                      : (_solo ? 'Начать путь' : (_kind == GroupKind.clan ? 'Основать клан' : 'Создать семью')),
                   icon: '🚀',
                   onPressed: _valid && !_busy ? _start : null,
                 ),
                 const SizedBox(height: 12),
                 Text(
                   _solo
-                      ? 'Позже можно пригласить семью — личный путь превратится в гильдию.'
-                      : 'Вы станете главой гильдии. Близких можно добавить позже.',
+                      ? 'Позже можно пригласить близких — личный путь станет семьёй или кланом. '
+                          'А ещё — вступить в гильдию вместе с другими героями.'
+                      : 'Вы станете главой ${_kind == GroupKind.clan ? 'клана' : 'семьи'}. Близких можно добавить позже, '
+                          'а потом — объединиться с другими семьями и кланами в гильдию.',
                   textAlign: TextAlign.center,
                   style: theme.textTheme.bodySmall,
                 ),
                 const SizedBox(height: 8),
+                if (CloudScope.of(context) != null)
+                  Center(
+                    child: TextButton(
+                      onPressed: _busy ? null : () => openJoin(context),
+                      child: const Text('🎟 У меня есть код приглашения в семью или клан',
+                          style: TextStyle(fontWeight: FontWeight.w800)),
+                    ),
+                  ),
                 Center(
                   child: TextButton(
                     onPressed: _busy ? null : () => importBackupFlow(context),

@@ -94,8 +94,49 @@ class GameRules {
   /// Можно ли отметить рутину прямо сейчас.
   static bool canDoNow(Goal g, DateTime now) => g.isDaily && isScheduledDay(g, now);
 
+  /// Сколько раз рутина выполнена в текущем периоде (v6: может быть больше одного).
+  static int timesDone(Goal g, DateTime now) {
+    if (!g.isDaily || g.lastDoneDay != dayKey(periodAnchor(g, now))) return 0;
+    return g.doneCount < 1 ? 1 : g.doneCount;
+  }
+
   /// Выполнена ли рутина в текущем периоде (сегодня / на этой неделе / в этом месяце).
-  static bool isDoneToday(Goal g, DateTime now) => g.isDaily && g.lastDoneDay == dayKey(periodAnchor(g, now));
+  /// Многоразовая — когда сделано столько раз, сколько задано; «без ограничения» —
+  /// после первого раза (но её можно отмечать ещё, см. [canRepeat]).
+  static bool isDoneToday(Goal g, DateTime now) {
+    final n = timesDone(g, now);
+    if (n == 0) return false;
+    return g.perPeriod == 0 || n >= g.periodLimit;
+  }
+
+  /// Можно ли отметить рутину ещё раз в этом периоде.
+  static bool canRepeat(Goal g, DateTime now) => canDoNow(g, now) && timesDone(g, now) < g.periodLimit;
+
+  /// Подпись счётчика многоразовой рутины: «2/3» или «×4».
+  static String timesLabel(Goal g, DateTime now) {
+    final n = timesDone(g, now);
+    return g.perPeriod == 0 ? '×$n' : '$n/${g.perPeriod}';
+  }
+
+  /// «2 раза в день», «без ограничения в неделю».
+  static String perPeriodLabel(Goal g) {
+    final when = switch (g.repeat) {
+      Repeat.daily => 'в день',
+      Repeat.weekly => 'в неделю',
+      Repeat.monthly => 'в месяц',
+    };
+    if (g.perPeriod == 0) return 'сколько угодно раз $when';
+    return '${g.perPeriod} ${timesWord(g.perPeriod)} $when';
+  }
+
+  static String timesWord(int n) {
+    final m10 = n % 10, m100 = n % 100;
+    if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return 'раза';
+    return 'раз';
+  }
+
+  /// Опыт за повторное выполнение в том же периоде: базовый, без бонуса серии.
+  static int repeatAgainXp(Goal g) => g.repeat.baseXp;
 
   /// Серия, которая получится, если выполнить рутину сейчас.
   static int nextStreak(Goal g, DateTime now) {
@@ -308,7 +349,7 @@ class GameRules {
   /// Начало календарного дня.
   static DateTime dayStart(DateTime d) => DateTime(d.year, d.month, d.day);
 
-  /// Записи героя (или всей гильдии, если [heroId] == null) за [days] дней,
+  /// Записи героя (или всей семьи, если [heroId] == null) за [days] дней,
   /// начиная с [start] (включительно).
   static Iterable<XpRecord> recordsIn(List<XpRecord> records, DateTime start, int days, {String? heroId}) {
     final from = dayStart(start);
@@ -479,7 +520,7 @@ class GameRules {
       perDayDailies.putIfAbsent(dayKey(r.at), () => {}).add(r.goalId);
     }
     final maxDailiesInDay = perDayDailies.values.fold<int>(0, (m, s) => max(m, s.length));
-    // Чемпион недели: больше всех опыта в гильдии за последние 7 дней.
+    // Чемпион недели: больше всех опыта в семье (клане) за последние 7 дней.
     final week = periodStats(records, now.subtract(const Duration(days: 6)), 7);
     final myWeek = week.byHero[hero.id] ?? 0;
     final champion = heroes.length >= 2 &&
@@ -521,8 +562,8 @@ class GameRules {
           onTime),
       a('all_round', '🧩', 'Мастер на все руки', (n) => 'Набрать $n XP в каждой характеристике', const [50, 200, 500],
           allRound),
-      if (!solo) a('team', '🤝', 'Командный игрок', (n) => '$n шагов в семейных целях', const [5, 25, 100], teamSteps),
-      if (!solo) a('champion', '🏆', 'Чемпион недели', (_) => 'Больше всех опыта в гильдии за 7 дней', const [1],
+      if (!solo) a('team', '🤝', 'Командный игрок', (n) => '$n шагов в общих целях ${Words.groupGen}', const [5, 25, 100], teamSteps),
+      if (!solo) a('champion', '🏆', 'Чемпион недели', (_) => 'Больше всех опыта в ${Words.groupPrep} за 7 дней', const [1],
           champion ? 1 : 0),
       a('focus', '⏱', 'Сосредоточенность', (n) => 'Провести $n минут на таймере', const [60, 600, 3000],
           focusMinutes),
@@ -536,7 +577,7 @@ class GameRules {
       a('saver', '🪙', 'Копилка героя', (n) => 'Скопить $n монет', const [100, 300, 1000], hero.coins),
       a('loot', '🎁', 'Охотник за лутом', (n) => n == 1 ? 'Получить награду из лавки' : 'Получить $n наград',
           const [1, 5, 20], loot),
-      if (!solo) a('family_legend', '👑', 'Легенда семьи', (_) => 'Семья завершила легенду', const [1], familyLegend ? 1 : 0),
+      if (!solo) a('family_legend', '👑', 'Легенда ${Words.groupGen}', (_) => Words.clan ? 'Клан завершил легенду' : 'Семья завершила легенду', const [1], familyLegend ? 1 : 0),
       if (hero.role.isAdult) ...[
         a('treasurer', '🧾', 'Казначей', (n) => 'Записать $n операций в бюджет', const [20, 100, 300],
             money.where((m) => m.heroId == hero.id).length),

@@ -103,7 +103,7 @@ class _QuestsScreenState extends State<QuestsScreen> {
                 label: Text(switch (f) {
                   _Filter.all => 'Все',
                   _Filter.mine => '${hero.avatar} Мои',
-                  _Filter.family => '🛡 Семейные',
+                  _Filter.family => Words.clan ? '⚔️ Клана' : '🏡 Семейные',
                   _Filter.private => '🔒 Личные',
                 }),
                 selected: _filter == f,

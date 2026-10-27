@@ -123,7 +123,7 @@ class GoalDetailScreen extends StatelessWidget {
                     Chip(label: Text('${goal.stat.emoji} ${goal.stat.label}')),
                     if (goal.area != null) Chip(label: Text('${goal.area!.emoji} ${goal.area!.label}')),
                     if (owner != null) Chip(label: Text('${owner.avatar} ${owner.name}')),
-                    if (goal.isFamily) const Chip(label: Text('🛡 Семейная')),
+                    if (goal.isFamily) Chip(label: Text('${Words.emoji} ${Words.sharedGoal}')),
                     if (goal.isPrivate) const Chip(label: Text('🔒 Личная')),
                     if (goal.isDaily) ...[
                       Chip(label: Text('${goal.repeat.emoji} ${GameRules.scheduleLabel(goal)}')),
@@ -183,7 +183,40 @@ class GoalDetailScreen extends StatelessWidget {
                   ),
                 ],
                 const SizedBox(height: 14),
-                if (goal.isDaily) ...[
+                if (goal.isDaily && goal.isMulti) ...[
+                  // v6: многоразовая рутина — «Ещё раз» и «Отменить последнее».
+                  Text(
+                    '${GameRules.perPeriodLabel(goal)} · ${GameRules.periodLabel(goal.repeat)}: '
+                    '${GameRules.timesLabel(goal, game.now)}',
+                    style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                  ),
+                  const SizedBox(height: 8),
+                  ChunkyButton(
+                    label: !GameRules.canDoNow(goal, game.now)
+                        ? 'Сегодня не по расписанию'
+                        : GameRules.canRepeat(goal, game.now)
+                            ? (GameRules.timesDone(goal, game.now) == 0
+                                ? 'Выполнить ${GameRules.periodLabel(goal.repeat)}'
+                                : 'Ещё раз  +${GameRules.repeatAgainXp(goal)} XP')
+                            : 'Всё выполнено ${GameRules.periodLabel(goal.repeat)} ✓',
+                    icon: goal.repeat.emoji,
+                    color: color,
+                    onPressed: GameRules.canRepeat(goal, game.now)
+                        ? () async {
+                            final r = await game.toggleDaily(goal.id);
+                            if (context.mounted) showReward(context, r);
+                          }
+                        : null,
+                  ),
+                  if (GameRules.timesDone(goal, game.now) > 0)
+                    Center(
+                      child: TextButton.icon(
+                        onPressed: () => game.undoDaily(goal.id),
+                        icon: const Icon(Icons.undo_rounded),
+                        label: const Text('Отменить последнюю отметку'),
+                      ),
+                    ),
+                ] else if (goal.isDaily) ...[
                   ChunkyButton(
                     label: GameRules.isDoneToday(goal, game.now)
                         ? 'Выполнено ${GameRules.periodLabel(goal.repeat)} ✓'
@@ -218,7 +251,7 @@ class GoalDetailScreen extends StatelessWidget {
                     onPressed: canEdit ? () => game.uncompleteGoal(goal.id) : null,
                   )
                 else if (goal.pendingApproval)
-                  const Text('⏳ Ждёт подтверждения главы гильдии', style: TextStyle(fontWeight: FontWeight.w800))
+                  Text('⏳ Ждёт подтверждения: ${Words.leader.toLowerCase()}', style: const TextStyle(fontWeight: FontWeight.w800))
                 else
                   ChunkyButton(
                     label: 'Выполнить  +${goal.tier.xp} XP · ${goal.tier.coins} 🪙',

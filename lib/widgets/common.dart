@@ -365,7 +365,7 @@ void showReward(BuildContext context, CompletionResult r) {
   final messenger = ScaffoldMessenger.of(context);
   messenger.hideCurrentSnackBar();
   if (r.pending) {
-    messenger.showSnackBar(const SnackBar(content: Text('⏳ Отправлено на подтверждение главе гильдии')));
+    messenger.showSnackBar(SnackBar(content: Text('⏳ Отправлено на подтверждение: ${Words.leader.toLowerCase()}')));
     return;
   }
   if (r.xp <= 0) return;

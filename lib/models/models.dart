@@ -2,8 +2,10 @@
 // чтобы позже без переделок перейти на серверную синхронизацию.
 
 import 'life.dart';
+import 'words.dart';
 
 export 'life.dart';
+export 'words.dart';
 
 enum GoalTier { legend, epic, quest, task, daily }
 
@@ -162,12 +164,13 @@ enum HeroRole { leader, member, child }
 
 extension HeroRoleInfo on HeroRole {
   String get label => switch (this) {
-        HeroRole.leader => 'Глава гильдии',
+        // v0.9: «Глава семьи» или «Глава клана».
+        HeroRole.leader => Words.leader,
         HeroRole.member => 'Герой',
         HeroRole.child => 'Юнга',
       };
 
-  /// Может подтверждать задания юнг и управлять гильдией.
+  /// Может подтверждать задания юнг и управлять семьёй (кланом).
   bool get canApprove => this == HeroRole.leader;
 
   /// Взрослый: видит бюджет, создаёт награды.
@@ -330,7 +333,11 @@ class Goal {
     this.monthDay,
     this.isPrivate = false,
     this.area,
+    int perPeriod = 1,
+    int doneCount = 0,
   })  : bestStreak = bestStreak ?? streak,
+        perPeriod = perPeriod.clamp(0, maxPerPeriod),
+        doneCount = doneCount < 0 ? 0 : doneCount,
         weekdays = weekdays ?? [];
 
   final String id;
@@ -379,6 +386,23 @@ class Goal {
   /// v5: раздел жизни (здоровье, финансы, карьера…). null — без раздела.
   LifeArea? area;
 
+  /// v6: сколько раз рутину можно выполнить за период (день / неделю / месяц).
+  /// 1 — как раньше, 0 — без ограничения (но не больше [maxPerPeriod]).
+  /// Выбирает взрослый: «Почистить зубы» — 2 раза в день, «Стакан воды» — без ограничения.
+  int perPeriod;
+
+  /// v6: сколько раз выполнено в периоде [lastDoneDay].
+  int doneCount;
+
+  /// Потолок для рутины «без ограничения» — чтобы опыт нельзя было накликать.
+  static const maxPerPeriod = 50;
+
+  /// Предел выполнений за период с учётом «без ограничения».
+  int get periodLimit => perPeriod == 0 ? maxPerPeriod : perPeriod;
+
+  /// Рутина, которую можно выполнять несколько раз за период.
+  bool get isMulti => isDaily && perPeriod != 1;
+
   bool get isDaily => tier == GoalTier.daily;
 
   Map<String, dynamic> toJson() => {
@@ -404,6 +428,9 @@ class Goal {
         'monthDay': monthDay,
         'isPrivate': isPrivate,
         'area': area?.name,
+        // v6: только у многоразовой рутины — у остальных JSON не меняется.
+        if (perPeriod != 1) 'perPeriod': perPeriod,
+        if (perPeriod != 1) 'doneCount': doneCount,
       };
 
   factory Goal.fromJson(Map<String, dynamic> j) => Goal(
@@ -433,6 +460,8 @@ class Goal {
         monthDay: (j['monthDay'] as num?)?.toInt(),
         isPrivate: j['isPrivate'] as bool? ?? false,
         area: LifeAreaInfo.fromName(j['area']),
+        perPeriod: (j['perPeriod'] as num?)?.toInt() ?? 1,
+        doneCount: (j['doneCount'] as num?)?.toInt() ?? 0,
       );
 }
 
@@ -644,8 +673,9 @@ class SavingsPot {
 
 // ---------- Журнал опыта (для статистики и достижений) ----------
 
-/// За что начислен опыт: цель/рутина, таймер, замер навыка, подъём по будильнику.
-enum XpKind { goal, focus, skill, wake }
+/// За что начислен опыт: цель/рутина, таймер, замер навыка, подъём по будильнику,
+/// v6: вклад в цель гильдии.
+enum XpKind { goal, focus, skill, wake, guild }
 
 /// Одна запись «герой получил опыт за цель». Хранится компактно:
 /// по ней строятся графики и считаются достижения вроде «Ранней пташки».
@@ -783,6 +813,7 @@ class AppState {
     List<Skill>? skills,
     List<SkillEntry>? skillEntries,
     this.remindersCheckedAt,
+    this.groupKind = GroupKind.family,
   })  : records = records ?? [],
         reminders = reminders ?? [],
         timers = timers ?? [],
@@ -821,8 +852,11 @@ class AppState {
   String? parentPinHash;
   String? parentPinSalt;
 
-  /// v4: личный режим «Только я» — без гильдии, юнг и семейных целей.
+  /// v4: личный режим «Только я» — без семьи, юнг и семейных целей.
   bool solo;
+
+  /// v6: как называется группа — «Семья» или «Клан».
+  GroupKind groupKind;
 
   /// v5: будильники и напоминания всех героев устройства.
   final List<Reminder> reminders;
@@ -841,12 +875,13 @@ class AppState {
   /// сообщить о пропущенных и не звонить дважды.
   DateTime? remindersCheckedAt;
 
+  /// v6: семья или клан, рутина несколько раз за период, вклад в цели гильдии.
   /// v5: разделы жизни, будильники и напоминания, таймеры, навыки и рекорды.
   /// v4: расписание рутины (неделя/месяц), черты характера, личные цели, режим «Только я».
   /// v3: журнал опыта, ступени достижений, рекорд серии, PIN родителя.
   /// v2: монеты, лут, сроки, бюджет, темы. Старые данные v1 читаются как есть —
   /// новые поля получают значения по умолчанию.
-  static const schemaVersion = 5;
+  static const schemaVersion = 6;
 
   Map<String, dynamic> toJson() => {
         'schema': schemaVersion,
@@ -864,6 +899,7 @@ class AppState {
         'parentPinHash': parentPinHash,
         'parentPinSalt': parentPinSalt,
         'solo': solo,
+        'groupKind': groupKind.name,
         'reminders': [for (final r in reminders) r.toJson()],
         'timers': [for (final t in timers) t.toJson()],
         'sessions': [for (final s in sessions) s.toJson()],
@@ -896,6 +932,7 @@ class AppState {
       parentPinHash: j['parentPinHash'] as String?,
       parentPinSalt: j['parentPinSalt'] as String?,
       solo: j['solo'] as bool? ?? false,
+      groupKind: GroupKindInfo.fromName(j['groupKind']),
       reminders: list('reminders').map(Reminder.fromJson).toList(),
       timers: list('timers').map(ActiveTimer.fromJson).toList(),
       sessions: list('sessions').map(FocusSession.fromJson).toList(),

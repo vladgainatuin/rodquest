@@ -6,7 +6,7 @@ import '../models/models.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 
-/// Открыть статистику: по герою или сразу по всей гильдии.
+/// Открыть статистику: по герою или сразу по всей семье (клану).
 void openStats(BuildContext context, {bool guild = false}) {
   Navigator.of(context).push(
     MaterialPageRoute<void>(
@@ -80,7 +80,7 @@ class _StatsScreenState extends State<StatsScreen> {
                     showSelectedIcon: false,
                     segments: [
                       ButtonSegment(value: false, label: Text('${hero.avatar} Я')),
-                      const ButtonSegment(value: true, label: Text('🛡 Гильдия')),
+                      ButtonSegment(value: true, label: Text('${Words.emoji} ${Words.group}')),
                     ],
                     selected: {_guild},
                     onSelectionChanged: (s) => setState(() => _guild = s.first),
@@ -458,7 +458,7 @@ class _HeroContribution extends StatelessWidget {
           if (total > 0)
             Padding(
               padding: const EdgeInsets.only(top: 6),
-              child: Text('Всего гильдия: $total XP', style: Theme.of(context).textTheme.bodySmall),
+              child: Text('Всего ${Words.groupLower}: $total XP', style: Theme.of(context).textTheme.bodySmall),
             ),
         ],
       ),
